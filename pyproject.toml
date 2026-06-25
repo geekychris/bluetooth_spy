@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bt-spy"
+version = "0.1.0"
+description = "BLE protocol reverse-engineering workstation: sniff, replay, analyze with Claude."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "bt-spy" }]
+
+dependencies = [
+    # CLI + config
+    "typer>=0.12",
+    "rich>=13.7",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    # Capture / parsing
+    "scapy>=2.5",
+    "pyserial>=3.5",
+    # Replay (host BLE)
+    "bleak>=0.21",
+    # REST + WebSocket UI server
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "jinja2>=3.1",
+    "websockets>=12",
+    # MCP server for Claude
+    "mcp>=1.0",
+    # Firmware download / DFU (nrfutil is installed separately — see docs/firmware-flashing.md)
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+
+[project.scripts]
+bt-spy = "bt_spy.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"bt_spy" = ["web/templates/*.html", "web/static/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

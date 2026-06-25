@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>bt-spy — BLE Protocol Workstation</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>bt-spy</h1>
+      <span class="tag">BLE protocol workstation</span>
+    </div>
+    <div class="status" id="health">checking…</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="capture">Capture</button>
+    <button class="tab" data-tab="sessions">Sessions</button>
+    <button class="tab" data-tab="diff">Diff</button>
+    <button class="tab" data-tab="replay">Replay</button>
+    <button class="tab" data-tab="protocol">Protocol Dict</button>
+    <button class="tab" data-tab="integrations">Integrations</button>
+    <button class="tab" data-tab="dongle">Dongle</button>
+  </nav>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section id="tab-dashboard" class="panel active">
+      <h2>Getting started</h2>
+      <ol class="steps">
+        <li><strong>Plug in</strong> the nRF52840 USB Dongle. Hit the small white RESET button — its red LED should pulse.</li>
+        <li>Open the <a href="#" data-jump="dongle">Dongle</a> tab → click <em>Flash sniffer firmware</em>.</li>
+        <li>Go to <a href="#" data-jump="capture">Capture</a> → start a session labelled <code>baseline</code> with the target device idle. Stop after ~30s.</li>
+        <li>Start another session labelled <code>do_X</code>. Perform action X in the vendor app. Stop.</li>
+        <li>Go to <a href="#" data-jump="diff">Diff</a>, pick <code>baseline</code> vs <code>do_X</code> — those are the packets that carry the command.</li>
+        <li>Go to <a href="#" data-jump="replay">Replay</a> to confirm by sending them yourself, optionally mutated.</li>
+        <li>Save findings as <a href="#" data-jump="protocol">Protocol Dict</a> entries so future-you (and Claude) can build on them.</li>
+      </ol>
+      <div class="hint">
+        Want Claude to drive? Run <code>bt-spy mcp</code> and add it to your Claude config (see docs/user-guide.md).
+      </div>
+    </section>
+
+    <!-- CAPTURE -->
+    <section id="tab-capture" class="panel">
+      <h2>Capture</h2>
+      <div id="capture-error" class="hidden">
+        <div class="big-pill" style="background: var(--bad); color: white;">capture failed</div>
+        <pre id="capture-error-msg"></pre>
+        <p class="hint" id="capture-error-hint"></p>
+      </div>
+      <div id="capture-active" class="hidden">
+        <div class="big-pill running">capturing — <span id="capture-label"></span></div>
+        <div class="stats">
+          <span>session #<span id="capture-sid"></span></span>
+          <span>stored <span id="capture-count">0</span></span>
+          <span>rate <span id="capture-rate">0</span>/s</span>
+          <span id="capture-filter-stats" class="hidden">filter: <span id="capture-seen">0</span> seen · <span id="capture-dropped">0</span> dropped</span>
+          <span id="capture-last-seen">no packets yet</span>
+        </div>
+        <p class="hint hidden" id="capture-no-packets-hint">
+          No packets in the first 4 seconds. Possible causes:
+          <br>• <strong>Active filter dropped everything:</strong> if the <em>filter stats</em> above show seen > 0 and dropped = seen,
+          your filter doesn't match any captured BD_ADDR. Most common cause: the filter resolved to a
+          CoreBluetooth UUID (from a scan) but PL captures real MACs. Run a Probe to bridge UUID→MAC first.
+          <br>• <strong>pklg_tail source:</strong> PL.app stopped writing, or you pointed at the wrong file
+          (click Detect to verify).
+          <br>• <strong>nrf_sniffer source:</strong> dongle isn't flashed, or no devices advertising in range.
+          <br>• <strong>Quick demo:</strong> use Probe with <em>Record as</em> to see real bt-spy output without any capture source.
+        </p>
+        <button class="danger" id="btn-stop-capture">Stop</button>
+      </div>
+      <form id="capture-form">
+        <label>Source
+          <select name="source" id="capture-source-select">
+            <option value="pklg_tail" selected>pklg_tail — tail a live PL.app save file (Recommended on Mac)</option>
+            <option value="nrf_sniffer">nrf_sniffer — over-the-air via dongle</option>
+          </select>
+        </label>
+        <label id="capture-pklg-path-row">PL save-file path
+          <div style="display:flex; gap:6px;">
+            <input name="pklg_tail_path" id="pklg-tail-path-input" placeholder="/Users/you/captures/live.pklg" style="flex:1" />
+            <button type="button" id="btn-detect-pklg">Detect</button>
+          </div>
+          <small style="color: var(--muted)" id="pklg-detect-status">
+            In PL.app: hit record, then <em>File → Save Live Capture As…</em>.
+            Click <em>Detect</em> to auto-fill from PL's currently-open file.
+          </small>
+        </label>
+        <label>Label <input name="label" required placeholder="e.g. baseline, tap_power_button" /></label>
+        <label>Notes <input name="notes" placeholder="optional" /></label>
+        <label>Device name <input name="device_name" placeholder="optional" /></label>
+        <label>Filter to devices (capture-time)
+          <div style="display:flex; gap:6px; align-items:end;">
+            <input name="device_filter" id="device-filter-input"
+                   placeholder="comma-separated BD_ADDRs or alias names; blank = capture everything"
+                   style="flex:1" />
+            <select id="device-filter-picker" style="min-width:200px">
+              <option value="">+ add from aliases…</option>
+            </select>
+          </div>
+          <small style="color: var(--muted)">
+            Drops non-matching packets before they hit the DB. Use after you've named devices
+            (shift-click chips) or after running Probe to bridge UUID→MAC.
+          </small>
+        </label>
+        <button type="submit">Start capture</button>
+      </form>
+
+      <h3>Scan + probe (Mac's own BLE)</h3>
+      <p class="hint">Use these while PacketLogger.app is recording — every byte will land in the .pklg you save.</p>
+      <form id="scan-form" style="display:flex; gap:8px; align-items:end;">
+        <label>Duration (s) <input name="duration" type="number" value="5" min="1" max="60" /></label>
+        <button type="submit">Scan</button>
+      </form>
+      <table id="scan-results">
+        <thead><tr><th>address</th><th>name</th><th>rssi</th><th>services</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <form id="probe-form" style="display:flex; flex-wrap:wrap; gap:8px; align-items:end;">
+        <label>Address <input name="address" required style="min-width:280px" /></label>
+        <label>Listen (ms) <input name="listen_for_notifications_ms" type="number" value="2000" /></label>
+        <label>Record as (session label)
+          <input name="record_as" value="probe" style="min-width:240px" />
+          <small style="color: var(--muted)">Auto-suffixed with timestamp. Clear to skip recording.</small>
+        </label>
+        <button type="submit">Probe</button>
+      </form>
+      <p class="hint">
+        Probe connects via your Mac's BLE, walks the device's GATT table, reads everything readable,
+        and listens for notifications. With <em>Record as</em> filled in (default), each read/notify becomes a
+        packet in a new session — no PacketLogger or dongle needed, and you'll see live rows at the bottom.
+      </p>
+      <pre id="probe-result"></pre>
+
+      <h3>Import a saved .pklg file</h3>
+      <p class="hint">Captured BT traffic on this Mac via <code>PacketLogger.app</code> already?
+        Drop the saved <code>.pklg</code> here to ingest as a new session — full diff / replay / MCP support, no dongle needed.</p>
+      <form id="import-pklg-form" enctype="multipart/form-data">
+        <label>Label <input name="label" required placeholder="e.g. mac_drives_bulb" /></label>
+        <label>Device name <input name="device_name" placeholder="optional" /></label>
+        <label>File <input name="file" type="file" accept=".pklg" required /></label>
+        <button type="submit">Import</button>
+      </form>
+      <pre id="import-result"></pre>
+      <h3>Mark what you're doing</h3>
+      <p class="hint">Optional. Tag the current point in the capture with what you're about to do
+        ("tap_power_on", "slide_brightness"). The mark covers every packet since the previous mark.</p>
+      <form id="marker-form" style="display:flex; gap:8px; align-items:end;">
+        <label>Label <input name="label" required placeholder="e.g. tap_power_on" /></label>
+        <label>Notes <input name="notes" placeholder="optional" /></label>
+        <button type="submit">Mark now</button>
+      </form>
+      <div id="marker-list" style="margin-top: 6px;"></div>
+
+      <h3>Devices seen <small style="color: var(--muted)">(click chip to filter — shift-click to rename)</small></h3>
+      <div id="live-devices" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
+
+      <details style="margin-bottom: 12px;">
+        <summary style="cursor:pointer">Known device aliases <small style="color: var(--muted)">(persistent across captures)</small></summary>
+        <p class="hint" style="margin-top:6px">
+          On macOS, scan results return <em>CoreBluetooth UUIDs</em> and capture sees real <em>MAC addresses</em> — they don't match.
+          Shift-click a chip above to attach a name to a captured MAC. Names persist across all future sessions.
+        </p>
+        <div id="alias-list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      </details>
+
+      <h3>Live packets</h3>
+      <div id="live-filter-bar" style="display:flex; flex-wrap: wrap; gap:8px; align-items:center; margin-bottom:8px;">
+        <input id="live-filter-text" placeholder="filter: substring of any column (addr, handle, payload hex, pdu, ...)" style="flex:1; min-width: 240px" />
+        <span id="live-filter-chips" style="display:flex; gap:4px; flex-wrap:wrap;"></span>
+        <button id="live-filter-clear" type="button">clear</button>
+      </div>
+      <table id="live-packets">
+        <thead><tr><th>ts</th><th>device</th><th>conn</th><th>dir</th><th>pdu</th><th>handle</th><th>payload</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Packet detail modal -->
+    <div id="packet-modal" class="modal hidden">
+      <div class="modal-card">
+        <button class="modal-close" id="modal-close">×</button>
+        <h3>Packet detail</h3>
+        <div id="modal-meta" class="kv-grid"></div>
+        <h4>Raw</h4>
+        <pre id="modal-raw"></pre>
+        <h4>Decoded layers</h4>
+        <pre id="modal-decoded"></pre>
+        <h4>Compare with another packet</h4>
+        <form id="modal-diff-form" style="display:flex; gap:6px; align-items:end;">
+          <label>Other packet ID <input name="other_id" type="number" required /></label>
+          <button type="submit">Diff</button>
+        </form>
+        <pre id="modal-diff-result" style="font-family: 'SF Mono', Menlo, monospace; font-size: 12px;"></pre>
+
+        <h4>Add annotation for this packet</h4>
+        <form id="modal-annotate-form">
+          <label>Label <input name="label" required placeholder="e.g. power_command" /></label>
+          <label>Notes <input name="notes" placeholder="optional" /></label>
+          <button type="submit">Add annotation</button>
+        </form>
+        <div id="modal-annotate-result" class="hint"></div>
+      </div>
+    </div>
+
+    <!-- SESSIONS -->
+    <section id="tab-sessions" class="panel">
+      <h2>Sessions</h2>
+      <button id="btn-refresh-sessions">Refresh</button>
+      <table id="sessions-table">
+        <thead><tr><th>#</th><th>label</th><th>started</th><th>ended</th><th>actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3>Session detail</h3>
+      <div id="session-detail">Pick a session above.</div>
+    </section>
+
+    <!-- DIFF -->
+    <section id="tab-diff" class="panel">
+      <h2>Diff two sessions</h2>
+      <p class="hint">Packets that appear in <em>candidate</em> but not in <em>baseline</em> (matched on handle + direction + payload bytes).</p>
+      <form id="diff-form">
+        <label>Baseline session ID <input name="baseline" type="number" required /></label>
+        <label>Candidate session ID <input name="candidate" type="number" required /></label>
+        <button type="submit">Diff</button>
+      </form>
+      <pre id="diff-result"></pre>
+    </section>
+
+    <!-- REPLAY -->
+    <section id="tab-replay" class="panel">
+      <h2>Replay</h2>
+      <p class="hint">Send a sequence of GATT writes to a real device. Use host BLE — no dongle needed for this part.</p>
+      <form id="replay-form">
+        <label>Target (device name OR CoreBluetooth UUID)
+          <input name="target" required placeholder="MiSmartLight or 5A7F-..." />
+        </label>
+        <label>Steps (JSON array)
+          <textarea name="steps" rows="6">[{"char_uuid":"0000fff1-0000-1000-8000-00805f9b34fb","payload_hex":"01ff","write_with_response":false}]</textarea>
+        </label>
+        <label>Listen for notifications (ms)
+          <input name="listen_for_notifications_ms" type="number" value="1000" />
+        </label>
+        <button type="submit">Run replay</button>
+      </form>
+      <pre id="replay-result"></pre>
+
+      <h3>Mutation sweep <small style="color: var(--muted)">(automate "try every value of byte N")</small></h3>
+      <p class="hint">Send the base payload with one byte (at <em>offset</em>) replaced by every value in [start, end] —
+        useful for figuring out "is byte 2 the brightness?" without writing a shell loop.</p>
+      <form id="sweep-form" style="display:grid; gap:6px; grid-template-columns: 1fr 1fr; max-width: 700px;">
+        <label>Target <input name="target" required placeholder="device name or CB UUID" /></label>
+        <label>Characteristic UUID <input name="char_uuid" required /></label>
+        <label style="grid-column: span 2">Base payload hex <input name="base_payload_hex" required placeholder="01 00 ff 7e (no spaces)" /></label>
+        <label>Offset to sweep <input name="offset" type="number" required value="1" /></label>
+        <label>Step <input name="step" type="number" value="16" min="1" /></label>
+        <label>Value start <input name="value_start" type="number" value="0" min="0" max="255" /></label>
+        <label>Value end <input name="value_end" type="number" value="255" min="0" max="255" /></label>
+        <label>Delay between writes (ms) <input name="delay_ms" type="number" value="200" /></label>
+        <label>Listen for notify per step (ms) <input name="listen_ms_per_step" type="number" value="0" /></label>
+        <button type="submit" style="grid-column: span 2">Run sweep</button>
+      </form>
+      <pre id="sweep-result"></pre>
+    </section>
+
+    <!-- PROTOCOL DICT -->
+    <section id="tab-protocol" class="panel">
+      <h2>Protocol dictionary</h2>
+      <button id="btn-refresh-proto">Refresh</button>
+      <table id="protocol-table">
+        <thead><tr><th>device</th><th>handle</th><th>direction</th><th>name</th><th>conf</th><th>notes</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <details>
+        <summary>Add / edit an entry</summary>
+        <form id="proto-form">
+          <label>Device name <input name="device_name" /></label>
+          <label>Handle <input name="handle" type="number" required /></label>
+          <label>Direction
+            <select name="direction" required>
+              <option>central-&gt;peripheral</option>
+              <option>peripheral-&gt;central</option>
+              <option>adv</option>
+            </select>
+          </label>
+          <label>Name <input name="name" required placeholder="e.g. set_brightness" /></label>
+          <label>Structure (JSON)
+            <textarea name="structure" rows="3">[{"offset":0,"length":1,"name":"cmd"},{"offset":1,"length":1,"name":"value"}]</textarea>
+          </label>
+          <label>Decoder snippet
+            <textarea name="decoder_py" rows="4" placeholder="def decode(payload): return {'cmd':payload[0],'value':payload[1]}"></textarea>
+          </label>
+          <label>Confidence <input name="confidence" type="number" min="0" max="1" step="0.05" value="0.5" /></label>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+    </section>
+
+    <!-- INTEGRATIONS -->
+    <section id="tab-integrations" class="panel">
+      <h2>Integrations</h2>
+      <p class="hint">Generate a standalone Python driver, a Home Assistant <code>custom_component</code>, or run as an MQTT bridge.
+        Inputs are your saved <a href="#" data-jump="protocol">Protocol Dict</a> entries — name them from the canonical vocabulary for clean scaffolding.</p>
+
+      <h3>Devices with protocol entries</h3>
+      <table id="integrations-devices">
+        <thead><tr><th>device</th><th>entries</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3>Export Python driver</h3>
+      <form id="export-driver-form">
+        <label>Device <input name="device_name" required /></label>
+        <label>Output dir <input name="out_dir" value="./drivers" /></label>
+        <button type="submit">Export driver</button>
+      </form>
+      <pre id="driver-result"></pre>
+
+      <h3>Scaffold Home Assistant integration</h3>
+      <form id="scaffold-ha-form">
+        <label>Device <input name="device_name" required /></label>
+        <label>Output dir <input name="out_dir" value="./custom_components" /></label>
+        <label>Local name (BLE adv) <input name="local_name" placeholder="optional" /></label>
+        <label>Service UUID <input name="service_uuid" placeholder="optional" /></label>
+        <label>Manufacturer ID <input name="manufacturer_id" type="number" placeholder="optional" /></label>
+        <button type="submit">Scaffold integration</button>
+      </form>
+      <pre id="scaffold-result"></pre>
+
+      <h3>MQTT bridge (CLI)</h3>
+      <p class="hint">No-code-on-HA path. Run <code>bt-spy bridge --device DEVICE --ble ADDR --mqtt mqtt://broker</code>
+        from a long-lived process. HA picks up the entities via MQTT discovery automatically.</p>
+
+      <h3>Vocabulary cheat-sheet</h3>
+      <details><summary>Canonical entry names → HA platforms</summary>
+        <pre id="vocab-block">loading…</pre>
+      </details>
+    </section>
+
+    <!-- DONGLE -->
+    <section id="tab-dongle" class="panel">
+      <h2>Dongle</h2>
+      <div id="dongle-info" class="kv-grid">…</div>
+      <button id="btn-flash" class="big">Flash sniffer firmware</button>
+      <p class="hint">Plug in the dongle and tap its small white RESET button before clicking. Flashing takes ~20s.</p>
+
+      <details style="margin-top: 8px;">
+        <summary style="cursor:pointer">Nordic auto-download blocked? Upload the bundle manually.</summary>
+        <p class="hint">Nordic's CDN sometimes 403s direct downloads.
+          Go to <a href="https://www.nordicsemi.com/Products/Development-tools/nRF-Sniffer-for-Bluetooth-LE/Download" target="_blank">Nordic's download page</a>,
+          grab the <code>nrf_sniffer_for_bluetooth_le_*.zip</code> in a browser, then upload it here:</p>
+        <form id="flash-bundle-form" enctype="multipart/form-data" style="display: flex; gap: 6px; align-items: end;">
+          <label>Bundle zip <input name="file" type="file" accept=".zip" required /></label>
+          <button type="submit">Upload + flash</button>
+        </form>
+      </details>
+      <pre id="flash-log"></pre>
+
+      <h3>Long-Term Keys (for encrypted-traffic decryption)</h3>
+      <p class="hint">If you've paired with a BLE device and extracted its LTK (e.g. from the Mac keychain),
+        store it here to attempt AES-CCM decryption of encrypted ACL traffic in future captures.
+        Stored LTKs are summarized in the UI but readable only via DB direct access.</p>
+      <form id="ltk-form" style="display:grid; gap:6px; grid-template-columns: 1fr 1fr; max-width: 700px;">
+        <label>Device BD_ADDR <input name="device_addr" required placeholder="AA:BB:CC:DD:EE:FF" /></label>
+        <label>Notes <input name="notes" placeholder="optional" /></label>
+        <label style="grid-column: span 2">LTK (32 hex chars, 16 bytes) <input name="ltk_hex" required placeholder="0123456789abcdef0123456789abcdef" /></label>
+        <button type="submit" style="grid-column: span 2">Save LTK</button>
+      </form>
+      <table id="ltk-list" style="margin-top: 12px;">
+        <thead><tr><th>device</th><th>LTK (summary)</th><th>notes</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
