@@ -3,6 +3,41 @@
 Suppose you have a "MiSmartLight" smart bulb and a vendor app that controls it.
 You want a Python script that does the same thing. Here's the full loop.
 
+## The loop, at a glance
+
+```mermaid
+sequenceDiagram
+    actor You
+    participant App as Vendor app<br/>(on your phone)
+    participant Bulb
+    participant Sniffer as bt-spy + dongle
+    participant Bleak as bt-spy replay (bleak)
+
+    Note over You,Sniffer: Phase 1: Observe
+    You->>Sniffer: Start "baseline" capture
+    Bulb-->>Sniffer: idle advertising
+    You->>Sniffer: Mark "tap_on"
+    You->>App: Tap Power On
+    App->>Bulb: write handle 36, payload "01 00 ff 7e"
+    Bulb-->>Sniffer: also seen by sniffer
+    You->>Sniffer: Stop
+
+    Note over You,Sniffer: Phase 2: Find what changed
+    You->>Sniffer: Diff baseline vs tap_on
+    Sniffer-->>You: "1 new packet: handle 36, payload 01 00 ff 7e"
+
+    Note over You,Bleak: Phase 3: Confirm
+    You->>Bleak: Replay with mutation set_byte(1, 1)
+    Bleak->>Bulb: write handle 36, payload "01 01 ff 7e"
+    Bulb->>Bulb: turns on
+    Bleak-->>You: ✓ confirmed
+
+    Note over You,Sniffer: Phase 4: Persist + scaffold
+    You->>Sniffer: Save protocol entry "power"<br/>encoder + decoder + handle
+    You->>Sniffer: Scaffold HA integration
+    Sniffer-->>You: custom_components/mismartlight/ ready
+```
+
 ## 0. Before you start
 
 - Flash your dongle (`bt-spy flash`).

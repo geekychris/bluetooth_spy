@@ -9,6 +9,28 @@
 You don't have to commit to one — they share the same input (`protocol_entries`)
 and can coexist.
 
+## How the three outputs relate
+
+```mermaid
+flowchart LR
+    PE[protocol_entries<br/>your RE knowledge dict]
+
+    PE --> DRV[Standalone driver<br/>drivers/mismartlight.py]
+    PE --> HA[HA custom_component<br/>custom_components/mismartlight/]
+    PE --> MQTT[MQTT bridge<br/>bt-spy bridge --mqtt …]
+
+    DRV --> SCRIPT([Use from any Python<br/>script / Node-RED / pyscript])
+    HA --> HAINST([Drop into Home Assistant<br/>+ restart])
+    MQTT --> BROKER([Any MQTT-aware<br/>HA instance])
+
+    classDef gen fill:#1d2230,stroke:#60a5fa
+    class DRV,HA,MQTT gen
+```
+
+The HA scaffold *imports* the standalone driver, so improvements to your encoders
+flow through to both. The MQTT bridge is the "I don't want to maintain a
+custom_component" escape hatch.
+
 ## The naming convention that unlocks everything
 
 The scaffolders read `protocol_entries.name` and look it up in a small canonical

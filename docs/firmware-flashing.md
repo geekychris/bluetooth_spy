@@ -1,162 +1,255 @@
-# Firmware flashing — the nRF52840 USB Dongle
+# Firmware flashing — nRF52840 USB Dongle
 
-bt-spy turns a stock $10 dongle into a BLE sniffer. This page is the deep-dive
-in case the one-liner (`bt-spy flash`) doesn't work the first time.
+bt-spy turns a ~$12 Nordic nRF52840 USB Dongle into a real BLE sniffer that
+can capture **any** BLE traffic in radio range (not just traffic involving
+your Mac). This page walks through the modern setup using nrfutil 8.x, which
+is the current Nordic-recommended flow as of 2025.
 
-## What you have
+## High-level flow
 
-The **nRF52840 USB Dongle** (Nordic part number PCA10059) is a stick-shaped
-USB-A device with:
-
-- One small **white reset button** on the side
-- One **red LED** (status)
-- One **multicolor LED** (RGB, used by firmware)
-- A castellated edge with GPIOs (irrelevant for sniffing)
-
-It ships with Nordic's **open bootloader** in unprotected flash. That means:
-
-- You can DFU-update it over USB indefinitely.
-- You don't need a JTAG/SWD programmer.
-- You also don't need to be a registered Nordic developer.
-
-## The flow
-
-```
-   ┌─────────────┐                ┌──────────────┐                ┌──────────────┐
-   │  cold plug  │  press RESET   │   bootloader │   nrfutil      │   sniffer    │
-   │  (running   ├───────────────►│   (LED       ├───────────────►│   firmware   │
-   │   whatever) │                │   pulsing)   │   DFU push     │   (running)  │
-   └─────────────┘                └──────────────┘                └──────────────┘
+```mermaid
+flowchart TB
+    A[Buy nRF52840 USB Dongle<br/>PCA10059, ~$12] --> B
+    B[Install nrfutil 8.x binary<br/>from nordicsemi.com] --> C
+    C[nrfutil install ble-sniffer completion device] --> D
+    D[Plug dongle in, press RESET<br/>red LED pulses → DFU mode] --> E
+    E[nrfutil device program --serial-number SN --firmware ...] --> F
+    F[bt-spy doctor → all green] --> G
+    G[Capture tab → source nrf_sniffer → Start]
 ```
 
-Two USB enumerations happen here, with different VID/PIDs:
-- **Bootloader**: `1915:521f` — accepts DFU commands
-- **Sniffer**: `1915:c00a` — exposes a CDC serial port over which the host
-  sends sniffer-protocol requests
+## What hardware to get
 
-`bt-spy` doesn't care about VID/PIDs directly; we just find any
-`/dev/cu.usbmodem*` from Nordic.
+**Buy the nRF52840 USB Dongle (PCA10059)**. Other Nordic boards (52840 DK,
+52833 DK, 52 DK) also work but are full development kits costing $50+ and are
+overkill unless you also plan to write custom BLE firmware.
 
-## The one-button flow
+- **Manufacturer**: Nordic Semiconductor
+- **Part number**: nRF52840-DONGLE, PCA10059
+- **Vendors**: element14, Mouser, DigiKey, Adafruit
+- **Form factor**: USB-A stick about the size of a thumbnail
+- **Cost**: ~$12
+
+If you get a knockoff (makerdiary's MDK USB Dongle, Adafruit's Feather Express),
+the firmware below won't fit — they use different bootloaders. Only PCA10059.
+
+## What software you need
+
+Two things, both free:
+
+1. **nrfutil 8.x binary** — Nordic's standalone tool for managing their hardware
+2. **The `ble-sniffer` subcommand** — installed *into* nrfutil via the binary's plugin system
+
+Together they give you everything bt-spy needs: the dongle firmware, the
+command-line capture tool, and (optionally) Wireshark integration.
+
+> **Important name collision**: there are two different tools called `nrfutil`.
+> The **old** one is a Python pip package (`pip install nrfutil` — maxes at
+> Python 3.10, has `dfu/pkg` subcommands but NOT `install`). The **new** one
+> is Nordic's standalone binary (`install/device/ble-sniffer` subcommands).
+> You want the *new* one. If `nrfutil --version` shows 6.x you have the old one.
+
+## Step 1 — install nrfutil 8.x
+
+Download `nrfutil` (macOS universal) from
+<https://www.nordicsemi.com/Products/Development-tools/nRF-Util/Download>.
 
 ```bash
-bt-spy flash
+# Remove the old Python nrfutil if it's on your system (it'll shadow the new one):
+pip uninstall nrfutil    # or pip3 uninstall nrfutil — may say "not installed", fine
+
+# Make the downloaded binary executable + put it on PATH:
+chmod +x ~/Downloads/nrfutil
+sudo mv ~/Downloads/nrfutil /opt/homebrew/bin/nrfutil       # Apple Silicon
+# or:
+# sudo mv ~/Downloads/nrfutil /usr/local/bin/nrfutil        # Intel Macs
+
+# macOS Gatekeeper marks downloaded binaries as untrusted. Strip it:
+sudo xattr -cr $(which nrfutil)
+
+# If the first run still triggers "move to trash":
+#   System Settings → Privacy & Security → "Allow Anyway" for nrfutil
+#   then re-run. Or codesign locally:
+sudo codesign --force --deep --sign - $(which nrfutil)
+
+# Confirm:
+hash -r
+nrfutil --version    # Should show 8.x
 ```
 
-What it does:
-
-1. **Find the dongle.** Looks for a Nordic VID on any USB serial port.
-   Will wait up to 30 s for one to appear so you can plug it in after starting.
-2. **Download the sniffer bundle** from Nordic (only first time, ~5 MB).
-   Cached at `~/.bt-spy/firmware-cache/nrf_sniffer_for_bluetooth_le.zip`.
-3. **Unpack** it. The bundle contains:
-   - `sniffer_pca10059_*.zip` — the actual firmware DFU package
-   - `extcap/nrf_sniffer_ble.py` — Nordic's host-side capture script
-   - PDFs and other resources we don't need
-4. **Run nrfutil DFU** against the dongle:
-   `nrfutil dfu usb-serial -pkg <fw>.zip -p /dev/cu.usbmodemXXXX`.
-5. **Install the extcap script** into `/Applications/Wireshark.app/Contents/MacOS/extcap/`
-   if Wireshark is present, so you can also use Wireshark on the same dongle.
-
-## Pressing the reset button
-
-This is the one manual step. The bootloader only listens for DFU traffic when
-the dongle is in DFU mode. To enter DFU mode:
-
-- **First time:** sometimes the dongle is already in DFU mode after a cold plug
-  (red LED slowly pulsing). If so, skip the button press.
-- **Otherwise:** with the dongle plugged in, press the small white button
-  exactly once. The red LED should start pulsing within ~500 ms.
-- **Re-flashing later:** once you've already flashed sniffer firmware, the
-  dongle boots into the sniffer (no LED pulse). You must press the white
-  button to get back into the bootloader before flashing again.
-
-If the LED doesn't pulse:
-- Try a different USB port. Bootloader DFU is reliable but the dongle's USB
-  data lines are tight against the casing; a hub or extension cable helps.
-- Confirm the dongle is the PCA10059 variant. Older Nordic dongles (PCA10056,
-  Decawave PCA10006) have different bootloaders.
-
-## When `bt-spy flash` fails
-
-### "No nRF52840 dongle detected"
-
-The dongle isn't enumerating. Check:
+## Step 2 — install the ble-sniffer subcommand
 
 ```bash
-ls /dev/cu.usbmodem*
-ioreg -p IOUSB -l -w 0 | grep -i nordic
+nrfutil install ble-sniffer completion device
 ```
 
-If nothing — the dongle isn't presenting itself. Re-seat it, press the reset
-button, and try again.
+This downloads ~30 MB into `~/.nrfutil/` including:
 
-### "nrfutil not found on PATH"
+- `~/.nrfutil/share/nrfutil-ble-sniffer/firmware/sniffer_nrf52840dongle_*.zip` — what gets flashed onto the dongle
+- The `ble-sniffer` command itself (you'll use `nrfutil ble-sniffer sniff` to capture)
+- The `device` command (you'll use `nrfutil device program` to flash)
 
 ```bash
-pip install nrfutil
-which nrfutil   # should resolve
+# (Optional) Wireshark integration — installs a shim Wireshark can call directly
+nrfutil ble-sniffer bootstrap
 ```
 
-Some Pythons install scripts to `~/.local/bin` or your venv's `bin/`. Either
-add to PATH or invoke `bt-spy` from inside the venv.
+## Step 3 — flash the dongle
 
-### "DFU timed out after 120s"
+```mermaid
+sequenceDiagram
+    actor You
+    participant Dongle
+    participant Mac
 
-Most common cause: the dongle is in sniffer-firmware mode, not bootloader.
-Press the white reset button to enter bootloader, then re-run.
+    You->>Dongle: Plug into USB
+    Dongle-->>Mac: Enumerates as factory firmware<br/>(no DFU mode)
+    You->>Dongle: Press small white RESET button on side
+    Dongle->>Dongle: Reset → enters open bootloader<br/>(red LED pulses)
+    Dongle-->>Mac: Re-enumerates as bootloader<br/>(new serial number)
+    You->>Mac: nrfutil device list
+    Mac-->>You: Shows bootloader's serial number
+    You->>Mac: nrfutil device program --serial-number BL_SN --firmware sniffer.zip
+    Mac->>Dongle: DFU push (~15s)
+    Dongle->>Dongle: Reset → runs sniffer firmware
+    Dongle-->>Mac: Re-enumerates as "nRF Sniffer for Bluetooth LE"
+```
 
-Second cause: the version of `nrfutil` you have doesn't speak the dongle's DFU
-protocol. The dongle's bootloader uses the "secure DFU" transport over USB
-serial. `nrfutil` v6.x supports it; v3.x doesn't.
+In commands:
 
 ```bash
-nrfutil version
-# nrfutil version 6.1.7   ← good
+# 1. Plug in dongle.
+
+# 2. Press the small white button on the SIDE of the dongle (not the end).
+#    The red LED should immediately start pulsing slowly.
+#    If no pulse:
+#      - Try a different USB-A port (some hubs are flaky for DFU)
+#      - Hold the button while plugging in
+#      - Confirm it's a PCA10059 (silkscreen on back)
+
+# 3. Find the bootloader serial number:
+nrfutil device list
+
+# You'll see a single device. Note its serial number (16 hex chars).
+# IMPORTANT: This is the BOOTLOADER serial. It changes when you enter DFU mode.
+# If you skip the reset-button press, you get the running app's serial instead,
+# and `device program` will refuse with "operation not available for this device".
+
+# 4. Flash. The firmware path is what `nrfutil install ble-sniffer` put down:
+nrfutil device program \
+  --serial-number <BL_SN_FROM_DEVICE_LIST> \
+  --firmware ~/.nrfutil/share/nrfutil-ble-sniffer/firmware/sniffer_nrf52840dongle_nrf52840_*.zip
 ```
 
-### "Firmware preparation failed"
+Flash takes ~15 seconds. The dongle re-enumerates with manufacturer "ZEPHYR"
+and product "nRF Sniffer for Bluetooth LE".
 
-Either the download from Nordic failed (transient — try again) or the zip
-layout changed (Nordic occasionally restructures their bundle). To force a
-re-download:
-
-```bash
-rm -rf ~/.bt-spy/firmware-cache
-bt-spy flash
-```
-
-If they really did restructure, override the URL:
-
-```bash
-BTSPY_SNIFFER_URL=https://example.com/your/mirror.zip bt-spy flash
-```
-
-## Manual flashing (without bt-spy)
-
-You shouldn't need this, but for completeness:
-
-```bash
-# 1. Download Nordic's bundle from
-#    https://www.nordicsemi.com/Products/Development-tools/nrf-sniffer-for-bluetooth-le
-# 2. Unzip. Locate sniffer_pca10059_*.zip inside.
-# 3. Put dongle in DFU mode (press white button).
-# 4. ls /dev/cu.usbmodem*    # find the port
-# 5. nrfutil dfu usb-serial -pkg sniffer_pca10059_*.zip -p /dev/cu.usbmodemXXXX
-```
-
-## Verifying the flash worked
+## Step 4 — verify bt-spy sees it
 
 ```bash
 bt-spy doctor
 ```
 
-Both `dongle` and `sniffer extcap` should show ✓. If `sniffer extcap` is ✗,
-the firmware is flashed but the host-side extcap script isn't in a standard
-location. You can either:
+Expected:
 
-- Point `BTSPY_SNIFFER_EXTCAP_PATH` at the extracted location:
-  `~/.bt-spy/firmware-cache/extracted/.../nrf_sniffer_ble.py`
-- Or symlink it into `~/.config/wireshark/extcap/`.
+```
+┌─────────────────────┬────────┬───────────────────────────────────┐
+│ check               │ status │ detail                            │
+├─────────────────────┼────────┼───────────────────────────────────┤
+│ data dir            │ ✓      │ ~/.bt-spy                         │
+│ db                  │ ✓      │ ~/.bt-spy/bt-spy.db               │
+│ dongle              │ ✓      │ /dev/cu.usbmodemXXX               │
+│ nrfutil ble-sniffer │ ✓      │ /opt/homebrew/bin/nrfutil         │
+│ nrfutil             │ ✓      │ found                             │
+│ wireshark           │ ✓ or ? │ optional                          │
+│ PacketLogger (live) │ ✓ or ? │ optional, only for HCI captures   │
+└─────────────────────┴────────┴───────────────────────────────────┘
+```
 
-Once both are green, you're ready to capture.
+If `nrfutil ble-sniffer` shows ✗ but `nrfutil` shows ✓, you likely still have
+the old Python `nrfutil` shadowing the new binary. Re-run `pip uninstall
+nrfutil`, then `hash -r`, then re-check.
+
+## Step 5 — capture
+
+In bt-spy's web UI (`bt-spy serve` → http://127.0.0.1:8765):
+
+- **Capture** tab
+- **Source**: `nrf_sniffer`
+- **Label**: whatever
+- Click **Start capture**
+
+Within a second you'll see live OTA packets in the bottom feed — every BLE
+device in radio range advertising, plus any connection traffic. Device chips
+appear automatically as each unique BD_ADDR is seen.
+
+## Sniffer-side device filter
+
+If you only care about traffic from one device, paste its BD_ADDR into
+**Filter to devices** before starting. bt-spy translates that into
+`nrfutil ble-sniffer sniff --follow <addr>` — the sniffer firmware then
+*only hops channels for that device*, which dramatically reduces capture
+size and works much better than software filtering.
+
+## Common failures
+
+### "The operation you tried to run is not available for the selected device"
+
+You used the wrong serial number. The number changes when you enter DFU mode.
+Press the reset button, re-run `nrfutil device list`, use the *new* serial.
+
+### "Device or resource busy"
+
+bt-spy is already running a capture and holding the dongle. Stop the capture
+in the UI, then try again. Or `lsof /dev/cu.usbmodemXXX` to confirm what's
+using it.
+
+### Capture starts but live feed stays empty
+
+- No BLE devices are advertising right now. Try opening BT settings on your phone or pulling AirPods out of the case to wake them up.
+- Check the doctor output — if the dongle port has changed (some captures leave it stuck), unplug + replug.
+- The OTA dongle picks up *unencrypted* advertising. If everything around you is in coded PHY mode or extended advertising, scapy may not decode it yet.
+
+### Gatekeeper kills nrfutil with "killed" status
+
+```bash
+sudo xattr -cr $(which nrfutil)
+sudo codesign --force --deep --sign - $(which nrfutil)
+```
+
+Then approve in Privacy & Security if it pops the dialog again.
+
+## Legacy path: manual zip flash (kept for fallback)
+
+bt-spy's old "download zip and flash" UI button is still wired — useful if for
+some reason `nrfutil install ble-sniffer` doesn't work on your network.
+Download the bundle from Nordic in a browser, then **Dongle tab → "Upload +
+flash"**. Internally it does the same DFU push.
+
+## What the dongle physically does
+
+```mermaid
+flowchart LR
+    SOURCE([Any BLE device<br/>nearby]) -.->|2.4 GHz| DONGLE[nRF52840<br/>sniffer firmware]
+    DONGLE -->|USB CDC serial| MAC[Mac]
+    MAC -->|spawns| NRFUTIL[nrfutil ble-sniffer sniff]
+    NRFUTIL -->|writes classic pcap| FILE[temp pcap file]
+    FILE -->|tailed by| BTSPY[bt-spy daemon]
+    BTSPY --> DB[(SQLite)]
+```
+
+The sniffer firmware hops through BLE's 40 channels (37 data + 3 advertising)
+following whatever it can latch onto, decapsulates the link-layer frames, and
+sends them to your Mac over a USB virtual serial port. nrfutil writes them
+into a pcap file. bt-spy tails that pcap and decodes each frame.
+
+The dongle has no batteries or radio modulation logic of its own — everything is
+just the standard nRF52840 SoC plus Nordic's sniffer firmware. You can flash
+it back to a different firmware (custom BLE peripheral, openthread, whatever)
+at any time using the same `nrfutil device program` flow.
+
+## Related docs
+
+- [user-guide.md](user-guide.md) — how to use what you just flashed
+- [packetlogger.md](packetlogger.md) — Mac-side HCI capture (no hardware needed)
+- [protocol-re-tutorial.md](protocol-re-tutorial.md) — end-to-end RE walkthrough

@@ -24,40 +24,32 @@
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    DONGLE[nRF52840 Dongle] -->|USB CDC| NRF[nrfutil ble-sniffer]
+    NRF -->|writes classic pcap| FILE1[(temp pcap)]
+    PL[PacketLogger.app] -->|writes incrementally| FILE2[(live.pklg)]
+
+    FILE1 --> DAEMON[CaptureDaemon<br/>iter_frames + decode + insert]
+    FILE2 --> DAEMON
+    PROBE[bleak Probe<br/>synthetic frames] --> DAEMON
+
+    DAEMON --> DB[(SQLite — durable)]
+    DAEMON --> WS[WebSocket broadcast]
+    DAEMON --> SUB[Custom subscribers]
+
+    DB --> REST[REST API]
+    DB --> MCP[MCP server]
+    DB --> CLI[CLI]
+
+    REST --> WEB[Web UI]
+    MCP --> CLAUDE([Claude])
+
+    REST --> REPLAY[Replay engine<br/>bleak GATT writes]
+    REST --> INT[Integration generators<br/>driver / HA / MQTT]
 ```
-┌──────────────────────┐  pcap-ng over stdout pipe
-│  nrf_sniffer_ble.py  ├───────────────────────┐
-│  (Nordic extcap)     │                       ▼
-└──────────────────────┘            ┌──────────────────────┐
-                                    │  CaptureDaemon       │
-        ┌────────────┐              │  - extcap subprocess │
-        │ nRF Dongle ├──USB CDC─────┘  - parser.iter()     │
-        └────────────┘                 - decode_btle()     │
-                                       - DB insert         │
-                                       - subscriber events │
-                                    └─────────┬────────────┘
-                                              │ subscribers
-                          ┌───────────────────┼──────────────────────┐
-                          ▼                   ▼                      ▼
-                   ┌───────────┐       ┌─────────────┐        ┌─────────────┐
-                   │  SQLite   │       │  WebSocket  │        │  (your fn)  │
-                   │  (durable)│       │  (UI live)  │        │  (extension)│
-                   └─────┬─────┘       └─────────────┘        └─────────────┘
-                         │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-      ┌──────────┐ ┌──────────┐ ┌──────────┐
-      │   REST   │ │   MCP    │ │   CLI    │
-      │ FastAPI  │ │ (Claude) │ │ (you)    │
-      └──────────┘ └──────────┘ └──────────┘
-                         │
-              ┌──────────┼──────────┐
-              ▼                     ▼
-      ┌──────────┐           ┌──────────┐
-      │  Replay  │           │  Flash   │
-      │  (bleak) │           │ (nrfutil)│
-      └──────────┘           └──────────┘
-```
+
+For more detailed diagrams see [architecture.md](architecture.md).
 
 Three things to know:
 

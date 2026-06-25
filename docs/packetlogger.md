@@ -3,7 +3,29 @@
 Apple ships a built-in Bluetooth HCI logger called **PacketLogger**. It captures
 every BT packet the Mac's own controller handles — at HCI level, plaintext even
 on encrypted connections (because the Mac stack has the keys). bt-spy can ingest
-both saved `.pklg` files and (where available) a live PacketLogger stream.
+both saved `.pklg` files and (where available) a live PacketLogger stream via tailing.
+
+## How it fits
+
+```mermaid
+flowchart LR
+    DEVICE([BLE device]) <-->|"BLE radio"| MAC[Mac BT controller]
+    APP([Your bleak script or<br/>system BT preference pane]) -->|"GATT calls"| MAC
+    MAC -->|HCI| BTD[bluetoothd]
+    BTD -.->|"with debug profile"| LOG[HCI log records]
+    LOG --> PL[PacketLogger.app]
+    PL -->|"File → Save Live Capture As…"| FILE[(live.pklg)]
+    FILE -->|"bt-spy pklg_tail"| BTSPY[bt-spy daemon]
+    BTSPY --> DB[(SQLite)]
+```
+
+Two-step capture:
+
+1. PL.app records and saves the live capture incrementally to a file
+2. bt-spy tails that file in real time, parsing records as PL writes them
+
+The `pklg_tail` source in bt-spy uses an `lsof`-based detector to auto-fill the
+file path (PL.app uses U+202F Unicode space in default filenames).
 
 ## What PacketLogger sees vs. the dongle
 
@@ -26,6 +48,16 @@ PacketLogger ships in Apple's **Additional Tools for Xcode** download:
 1. Sign in at <https://developer.apple.com/download/all/> (free Apple ID).
 2. Search "Additional Tools for Xcode" — pick the version matching your Xcode.
 3. Open the disk image. Drag `PacketLogger.app` (under `Hardware/`) into `/Applications/`.
+
+**Critical second step**: install Apple's Bluetooth Logging Configuration Profile.
+PL.app records *nothing* without it on modern macOS.
+
+1. Go to <https://developer.apple.com/bug-reporting/profiles-and-logs/>.
+2. Scroll to **Bluetooth** → download the *Bluetooth Logging* `.mobileconfig`.
+3. Install via *System Settings → Privacy & Security → Profiles*.
+4. **Reboot.**
+
+After reboot PL.app will actually show packets when you hit record.
 
 After install:
 
