@@ -4,6 +4,72 @@ Everything bt-spy does, by example. Pick whichever workflow matches your goal �
 the rest of the docs (architecture, data-model, api-reference, extending) are
 there if you want to look under the hood.
 
+## A 60-second tour
+
+<details>
+<summary>Dashboard — getting-started checklist</summary>
+
+![Dashboard](screenshots/01-dashboard.png)
+</details>
+
+<details>
+<summary>Capture — source, scan/probe, import, mark, live feed</summary>
+
+![Capture](screenshots/02-capture.png)
+</details>
+
+<details>
+<summary>Sessions — history with View / Summary / pcap</summary>
+
+![Sessions](screenshots/03-sessions.png)
+</details>
+
+<details>
+<summary>Session detail — device chips, markers, filter, click-into-row</summary>
+
+![Session detail](screenshots/09-session-detail.png)
+</details>
+
+<details>
+<summary>Packet detail modal — raw + decoded layers + compare-with form</summary>
+
+![Packet detail](screenshots/10-packet-detail.png)
+</details>
+
+<details>
+<summary>Diff — find what's new between two sessions</summary>
+
+![Diff](screenshots/04-diff.png)
+</details>
+
+<details>
+<summary>Replay — manual writes + mutation sweep</summary>
+
+![Replay](screenshots/05-replay.png)
+</details>
+
+<details>
+<summary>Protocol Dict — your accumulated knowledge</summary>
+
+![Protocol Dict](screenshots/06-protocol-dict.png)
+
+The expanded "Add / edit an entry" form:
+
+![Protocol Dict add entry](screenshots/11-protocol-add-entry.png)
+</details>
+
+<details>
+<summary>Integrations — driver / HA / MQTT generators</summary>
+
+![Integrations](screenshots/07-integrations.png)
+</details>
+
+<details>
+<summary>Dongle — flash + LTKs + health</summary>
+
+![Dongle](screenshots/08-dongle.png)
+</details>
+
 ## What is bt-spy?
 
 A workstation that lets you:

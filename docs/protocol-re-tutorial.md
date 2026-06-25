@@ -3,6 +3,12 @@
 Suppose you have a "MiSmartLight" smart bulb and a vendor app that controls it.
 You want a Python script that does the same thing. Here's the full loop.
 
+Here's what it looks like in the UI when you're partway through:
+
+![Session detail](screenshots/09-session-detail.png)
+
+The chip panel shows distinct devices, the filter input handles MAC/UUID/name, and clicking any packet row opens a detail modal with the byte-level *Compare with another packet* form.
+
 ## The loop, at a glance
 
 ```mermaid

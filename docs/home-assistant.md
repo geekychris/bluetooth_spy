@@ -1,5 +1,8 @@
 # Home Assistant integrations
 
+![Integrations tab](screenshots/07-integrations.png)
+
+
 `bt-spy` turns your reverse-engineered protocol entries into:
 
 1. **A standalone Python driver** for the device — works anywhere.

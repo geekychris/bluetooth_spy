@@ -10,6 +10,9 @@ protocol-entry vocabulary.
 Designed for macOS (Linux ports are 1-day), opinionated for the "I want to control my own
 BLE device" use case.
 
+![Capture tab](docs/screenshots/02-capture.png)
+![Session detail with diff](docs/screenshots/09-session-detail.png)
+
 ---
 
 ## At a glance
