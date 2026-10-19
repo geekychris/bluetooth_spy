@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Bluetooth Spy logo" width="180">
+</p>
+
 # bt-spy — BLE protocol reverse-engineering workstation
 
 Sniff Bluetooth Low Energy traffic with a ~$12 nRF52840 USB Dongle (or with macOS's built-in
